@@ -25,12 +25,8 @@ jobs:
 
       - name: 执行股票分析
         env:
-          # 只使用 AIHubMix（强制配置）
-          AIHUBMIX_KEY: ${{ secrets.AIHUBMIX_KEY }}
-          OPENAI_API_KEY: ${{ secrets.AIHUBMIX_KEY }}
-          OPENAI_BASE_URL: "https://api.aihubmix.com/v1"
-          OPENAI_MODEL: "gpt-4o-mini"
-          
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: "gemini-2.5-flash"
           STOCK_LIST: ${{ secrets.STOCK_LIST }}
         run: |
           python main.py
