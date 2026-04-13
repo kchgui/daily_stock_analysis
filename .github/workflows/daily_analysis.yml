@@ -56,28 +56,27 @@ jobs:
         run: |
           mkdir -p data logs reports
       
-      - name: 执行股票分析
-        env:
-          # ==========================================
-          # AI 配置
-          # ==========================================
-          # Gemini AI（主选）
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL || 'gemini-3-flash-preview' }}
-          GEMINI_MODEL_FALLBACK: ${{ vars.GEMINI_MODEL_FALLBACK || secrets.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash' }}
-          GEMINI_REQUEST_DELAY: '3.0'
-          
-          # AIHubMix（优先于 OPENAI_API_KEY，自动适配 base_url，推荐国内用户）
-          AIHUBMIX_KEY: ${{ secrets.AIHUBMIX_KEY }}
+     - name: 执行股票分析
+  env:
+    # ==========================================
+    # AI 配置（已优化，优先使用 AIHubMix）
+    # ==========================================
+    
+    # AIHubMix（推荐国内用户使用，兼容性最好）
+    AIHUBMIX_KEY: ${{ secrets.AIHUBMIX_KEY }}
+    AIHUBMIX_MODEL: "gpt-4o-mini"          # 可改成 "claude-3-haiku" 或 "deepseek-chat"
 
-          # OpenAI 兼容 API（备选）
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL }}
+    # OpenAI 兼容（备选）
+    OPENAI_API_KEY: ${{ secrets.AIHUBMIX_KEY }}   # 直接复用 AIHubMix Key
+    OPENAI_BASE_URL: "https://api.aihubmix.com/v1"   # AIHubMix 的 base_url
+    OPENAI_MODEL: "gpt-4o-mini"
 
-          # Anthropic / Claude
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || secrets.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022' }}
+    # Gemini（如果想用，可保留，但建议先用上面 AIHubMix）
+    GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    GEMINI_MODEL: "gemini-2.0-flash"
+
+    # 其他设置
+    GEMINI_REQUEST_DELAY: '3.0'
 
           # ==========================================
           # 数据源
