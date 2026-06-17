@@ -28,6 +28,8 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: "gemini-2.5-flash"
           STOCK_LIST: ${{ secrets.STOCK_LIST }}
+          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
         run: |
           python main.py
 
