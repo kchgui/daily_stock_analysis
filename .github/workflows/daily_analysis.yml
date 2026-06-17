@@ -30,6 +30,8 @@ jobs:
           STOCK_LIST: ${{ secrets.STOCK_LIST }}
           WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
           TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python main.py
 
