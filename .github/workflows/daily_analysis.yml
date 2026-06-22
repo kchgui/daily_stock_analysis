@@ -3,7 +3,7 @@ name: 每日股票分析
 on:
   workflow_dispatch:
   schedule:
-    - cron: '20 0 * * 1-5'   # 北京时间每天8:20运行
+    - cron: '0 10 * * *'   # 北京时间每天18运行
 
 jobs:
   analyze:
