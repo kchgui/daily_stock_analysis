@@ -81,5 +81,3 @@ jobs:
         run: |
           echo "分析完成"
           ls -la logs/ 2>/dev/null || true
-        run: |
-          echo "分析完成！请在 Artifacts 中下载报告"
