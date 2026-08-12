@@ -8,13 +8,14 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: 设置 Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -29,6 +30,8 @@ jobs:
           GEMINI_MODEL: "gemini-2.5-flash"
           STOCK_LIST: ${{ secrets.STOCK_LIST }}
           TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+          SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
