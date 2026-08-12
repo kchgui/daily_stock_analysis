@@ -1,48 +1,36 @@
-name: 每日股票分析
-
-on:
+name: 每日股票分析on:
   workflow_dispatch:
   schedule:
-    - cron: '30 21 * * 1-5'
-
-jobs:
+    - cron: '30 21 * * 1-5'  # 北京时间次日05:30（美股收盘后）jobs:
   analyze:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    runs-on: ubuntu-lateststeps:
+  - name: 检出代码
+    uses: actions/checkout@v5
 
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+  - name: 设置 Python
+    uses: actions/setup-python@v6
+    with:
+      python-version: '3.11'
 
-      - name: 设置 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+  - name: 安装依赖
+    run: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
 
-      - name: 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+  - name: 执行股票分析
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: "gemini-2.5-flash"
+      STOCK_LIST: ${{ secrets.STOCK_LIST }}
+      TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    run: |
+      python main.py
 
-      - name: 执行股票分析
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-2.5-flash
-          AIHUBMIX_KEY: ${{ secrets.AIHUBMIX_KEY }}
-          STOCK_LIST: ${{ secrets.STOCK_LIST }}
-          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
-          BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
-          SERPAPI_API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
-          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
-          MAX_WORKERS: "1"
-          ANALYSIS_DELAY: "15"
-          NEWS_MAX_AGE_DAYS: "14"
-          REPORT_TYPE: full
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-        run: python main.py
+  - name: 显示运行结果
+    if: always()
+    run: |
+      echo "分析完成！请在 Artifacts 中下载报告"
 
-      - name: 显示运行结果
-        if: always()
-        run: echo "分析完成"
+
