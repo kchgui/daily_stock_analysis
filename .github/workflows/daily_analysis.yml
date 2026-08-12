@@ -1,9 +1,9 @@
 name: 每日股票分析
 
 on:
-  workflow_dispatch:          # 允许手动触发
+  workflow_dispatch:
   schedule:
-    - cron: '30 21 * * 1-5'   # UTC 21:30 = 北京时间次日 05:30（美股收盘后）
+    - cron: '30 21 * * 1-5'  # UTC 21:30 = 北京时间次日 05:30（美股收盘后）
 
 jobs:
   analyze:
@@ -26,17 +26,14 @@ jobs:
       - name: 执行股票分析
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-2.5-flash
+          GEMINI_MODEL: "gemini-2.5-flash"
           STOCK_LIST: ${{ secrets.STOCK_LIST }}
           TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # 可选：需要时再加
-          # REPORT_TYPE: full
-          # REPORT_SUMMARY_ONLY: false
         run: python main.py
 
-      # 真正把报告传出来（之前只写了提示却没有上传）
+      # 真正把报告传出来
       - name: 上传分析报告
         if: always()
         uses: actions/upload-artifact@v4
@@ -52,6 +49,4 @@ jobs:
 
       - name: 显示运行结果
         if: always()
-        run: |
-          echo "分析完成！"
-          echo "报告已上传到 Artifacts，可在本页面右侧下载。"
+        run: echo "分析完成！报告已上传到 Artifacts，可在右侧下载。"
