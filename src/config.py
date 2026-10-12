@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 from dotenv import load_dotenv, dotenv_values
+from src.dashboard_quality import parse_stock_list
 from dataclasses import dataclass, field
 
 
@@ -404,11 +405,7 @@ class Config:
         
         # 解析自选股列表（逗号分隔，统一为大写 Issue #355）
         stock_list_str = os.getenv('STOCK_LIST', '')
-        stock_list = [
-            (c or "").strip().upper()
-            for c in stock_list_str.split(',')
-            if (c or "").strip()
-        ]
+        stock_list = parse_stock_list(stock_list_str)
         
         # 如果没有配置，使用默认的示例股票
         if not stock_list:
@@ -1017,11 +1014,7 @@ class Config:
         if not stock_list_str:
             stock_list_str = os.getenv('STOCK_LIST', '')
 
-        stock_list = [
-            (c or "").strip().upper()
-            for c in stock_list_str.split(',')
-            if (c or "").strip()
-        ]
+        stock_list = parse_stock_list(stock_list_str)
 
         if not stock_list:
             stock_list = ['000001']

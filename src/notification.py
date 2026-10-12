@@ -15,7 +15,7 @@ A股自选股智能分析系统 - 通知层
    - Pushover（手机/桌面推送）
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from enum import Enum
 
@@ -38,6 +38,11 @@ from src.notification_sender import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _now_beijing():
+    """Use an explicit timezone independent of the runner's timezone."""
+    return datetime.now(timezone(timedelta(hours=8)))
 
 
 class NotificationChannel(Enum):
@@ -442,14 +447,17 @@ class NotificationService(
         Returns:
             Markdown 格式的日报内容
         """
+        all_results = results
+        results = [result for result in results if result.success]
+
         if report_date is None:
-            report_date = datetime.now().strftime('%Y-%m-%d')
+            report_date = _now_beijing().strftime('%Y-%m-%d')
 
         # 标题
         report_lines = [
             f"# 📅 {report_date} 股票智能分析报告",
             "",
-            f"> 共分析 **{len(results)}** 只股票 | 报告生成时间：{datetime.now().strftime('%H:%M:%S')}",
+            f"> 共分析 **{len(results)}** 只股票 | 报告生成时间：{_now_beijing().strftime('%H:%M:%S')}",
             "",
             "---",
             "",
@@ -463,9 +471,12 @@ class NotificationService(
         )
         
         # 统计信息 - 使用 decision_type 字段准确统计
-        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
+        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy' or r.operation_advice == '待验证候选')
         sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
-        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
+        hold_count = sum(
+            1 for r in results if getattr(r, 'decision_type', '') in ('hold', '')
+            and r.operation_advice != '待验证候选'
+        )
         avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
         
         report_lines.extend([
@@ -473,9 +484,9 @@ class NotificationService(
             "",
             "| 指标 | 数值 |",
             "|------|------|",
-            f"| 🟢 建议买入/加仓 | **{buy_count}** 只 |",
+            f"| 🟡 待验证候选 | **{buy_count}** 只 |",
             f"| 🟡 建议持有/观望 | **{hold_count}** 只 |",
-            f"| 🔴 建议减仓/卖出 | **{sell_count}** 只 |",
+            f"| 🟠 风险复核 | **{sell_count}** 只 |",
             f"| 📈 平均看多评分 | **{avg_score:.1f}** 分 |",
             "",
             "---",
@@ -626,10 +637,10 @@ class NotificationService(
         # 底部信息（去除免责声明）
         report_lines.extend([
             "",
-            f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+            f"*报告生成时间（北京时间）：{_now_beijing().strftime('%Y-%m-%d %H:%M:%S')}*",
         ])
         
-        return "\n".join(report_lines)
+        return self._quality_header(all_results) + "\n".join(report_lines) + self._failure_section(all_results)
     
     @staticmethod
     def _escape_md(name: str) -> str:
@@ -654,6 +665,32 @@ class NotificationService(
                 return value[len(prefix):]
         return value
 
+    @staticmethod
+    def _quality_header(results: List[AnalysisResult]) -> str:
+        """Count failed items separately from valid market judgments."""
+        valid = sum(1 for result in results if result.success)
+        missing = sum(1 for result in results if not result.success
+                      and getattr(result, "analysis_status", "") == "insufficient_data")
+        failed = len(results) - valid - missing
+        candidates = sum(1 for result in results if result.success and result.operation_advice == "待验证候选")
+        review = sum(1 for result in results if result.success and result.operation_advice == "风险复核")
+        return (f"> 股票池：{len(results)}只 | 有效分析：{valid}只 | 数据不足：{missing}只 | 处理失败：{failed}只\n"
+                f"> 待验证候选：{candidates}只 | 风险复核：{review}只 | 评分非上涨概率\n\n")
+
+    @staticmethod
+    def _failure_section(results: List[AnalysisResult]) -> str:
+        """Show failure reasons without scores, fabricated prices or trade plans."""
+        failed = [result for result in results if not result.success]
+        if not failed:
+            return ""
+        lines = ["", "## ⚠️ 未生成有效信号", ""]
+        for result in failed:
+            reason = str(result.error_message or result.analysis_summary or "处理失败").replace("\n", " ")[:200]
+            status = "数据不足" if getattr(result, "analysis_status", "") == "insufficient_data" else "处理失败"
+            lines.append(f"- {result.code}：{status}；{reason}")
+        lines.extend(["", "以上项目不计入买卖或观望判断，缺失值不代表0。"])
+        return "\n".join(lines)
+
     def _get_signal_level(self, result: AnalysisResult) -> tuple:
         """
         Get signal level and color based on operation advice.
@@ -665,11 +702,15 @@ class NotificationService(
         Returns:
             (signal_text, emoji, color_tag)
         """
+        if not result.success:
+            return ('无法分析', '⚠️', '失败')
         advice = result.operation_advice
         score = result.sentiment_score
 
         # Advice-first lookup (exact match takes priority)
         advice_map = {
+            '待验证候选': ('待验证候选', '🟡', '候选'),
+            '风险复核': ('风险复核', '🟠', '复核'),
             '强烈买入': ('强烈买入', '💚', '强买'),
             '买入': ('买入', '🟢', '买入'),
             '加仓': ('买入', '🟢', '买入'),
@@ -715,21 +756,27 @@ class NotificationService(
         Returns:
             Markdown 格式的决策仪表盘日报
         """
+        all_results = results
+        results = [result for result in results if result.success]
+
         if report_date is None:
-            report_date = datetime.now().strftime('%Y-%m-%d')
+            report_date = _now_beijing().strftime('%Y-%m-%d')
 
         # 按评分排序（高分在前）
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
 
         # 统计信息 - 使用 decision_type 字段准确统计
-        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
+        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy' or r.operation_advice == '待验证候选')
         sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
-        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
+        hold_count = sum(
+            1 for r in results if getattr(r, 'decision_type', '') in ('hold', '')
+            and r.operation_advice != '待验证候选'
+        )
 
         report_lines = [
             f"# 🎯 {report_date} 决策仪表盘",
             "",
-            f"> 共分析 **{len(results)}** 只股票 | 🟢买入:{buy_count} 🟡观望:{hold_count} 🔴卖出:{sell_count}",
+            f"> 共分析 **{len(results)}** 只股票 | 🟡候选:{buy_count} 🟡观望:{hold_count} 🟠风险复核:{sell_count}",
             "",
         ]
 
@@ -961,10 +1008,10 @@ class NotificationService(
         # 底部（去除免责声明）
         report_lines.extend([
             "",
-            f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+            f"*报告生成时间（北京时间）：{_now_beijing().strftime('%Y-%m-%d %H:%M:%S')}*",
         ])
         
-        return "\n".join(report_lines)
+        return self._quality_header(all_results) + "\n".join(report_lines) + self._failure_section(all_results)
     
     def generate_wechat_dashboard(self, results: List[AnalysisResult]) -> str:
         """
@@ -978,20 +1025,26 @@ class NotificationService(
         Returns:
             精简版决策仪表盘
         """
-        report_date = datetime.now().strftime('%Y-%m-%d')
+        all_results = results
+        results = [result for result in results if result.success]
+
+        report_date = _now_beijing().strftime('%Y-%m-%d')
         
         # 按评分排序
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
         
         # 统计 - 使用 decision_type 字段准确统计
-        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
+        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy' or r.operation_advice == '待验证候选')
         sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
-        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
+        hold_count = sum(
+            1 for r in results if getattr(r, 'decision_type', '') in ('hold', '')
+            and r.operation_advice != '待验证候选'
+        )
         
         lines = [
             f"## 🎯 {report_date} 决策仪表盘",
             "",
-            f"> {len(results)}只股票 | 🟢买入:{buy_count} 🟡观望:{hold_count} 🔴卖出:{sell_count}",
+            f"> {len(results)}只股票 | 🟡候选:{buy_count} 🟡观望:{hold_count} 🟠风险复核:{sell_count}",
             "",
         ]
         
@@ -1103,14 +1156,14 @@ class NotificationService(
                 lines.append("")
         
         # 底部
-        lines.append(f"*生成时间: {datetime.now().strftime('%H:%M')}*")
+        lines.append(f"*生成时间: {_now_beijing().strftime('%H:%M')}*")
         models = self._collect_models_used(results)
         if models:
             lines.append(f"*分析模型: {', '.join(models)}*")
 
         content = "\n".join(lines)
         
-        return content
+        return self._quality_header(all_results) + content + self._failure_section(all_results)
     
     def generate_wechat_summary(self, results: List[AnalysisResult]) -> str:
         """
@@ -1122,21 +1175,27 @@ class NotificationService(
         Returns:
             精简版 Markdown 内容
         """
-        report_date = datetime.now().strftime('%Y-%m-%d')
+        all_results = results
+        results = [result for result in results if result.success]
+
+        report_date = _now_beijing().strftime('%Y-%m-%d')
 
         # 按评分排序
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
 
         # 统计 - 使用 decision_type 字段准确统计
-        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
+        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy' or r.operation_advice == '待验证候选')
         sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
-        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
+        hold_count = sum(
+            1 for r in results if getattr(r, 'decision_type', '') in ('hold', '')
+            and r.operation_advice != '待验证候选'
+        )
         avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
 
         lines = [
             f"## 📅 {report_date} 股票分析报告",
             "",
-            f"> 共 **{len(results)}** 只 | 🟢买入:{buy_count} 🟡持有:{hold_count} 🔴卖出:{sell_count} | 均分:{avg_score:.0f}",
+            f"> 共 **{len(results)}** 只 | 🟡候选:{buy_count} 🟡持有:{hold_count} 🟠风险复核:{sell_count} | 均分:{avg_score:.0f}",
             "",
         ]
         
@@ -1177,7 +1236,7 @@ class NotificationService(
 
         content = "\n".join(lines)
 
-        return content
+        return self._quality_header(all_results) + content + self._failure_section(all_results)
 
     def generate_single_stock_report(self, result: AnalysisResult) -> str:
         """
@@ -1191,7 +1250,10 @@ class NotificationService(
         Returns:
             Markdown 格式的单股报告
         """
-        report_date = datetime.now().strftime('%Y-%m-%d %H:%M')
+        if not result.success:
+            return self._quality_header([result]) + self._failure_section([result])
+
+        report_date = _now_beijing().strftime('%Y-%m-%d %H:%M')
         signal_text, signal_emoji, _ = self._get_signal_level(result)
         dashboard = result.dashboard if hasattr(result, 'dashboard') and result.dashboard else {}
         core = dashboard.get('core_conclusion', {}) if dashboard else {}
@@ -1313,9 +1375,9 @@ class NotificationService(
             return
 
         lines.extend([
-            "### 📈 当日行情",
+            f"### 📈 行情快照（数据日期：{snapshot.get('date', '未知')}；实时截点待核验）",
             "",
-            "| 收盘 | 昨收 | 开盘 | 最高 | 最低 | 涨跌幅 | 涨跌额 | 振幅 | 成交量 | 成交额 |",
+            "| 快照价 | 前收盘 | 开盘 | 最高 | 最低 | 涨跌幅 | 涨跌额 | 振幅 | 成交量 | 成交额 |",
             "|------|------|------|------|------|-------|-------|------|--------|--------|",
             f"| {snapshot.get('close', 'N/A')} | {snapshot.get('prev_close', 'N/A')} | "
             f"{snapshot.get('open', 'N/A')} | {snapshot.get('high', 'N/A')} | "
@@ -1506,7 +1568,7 @@ class NotificationService(
         from pathlib import Path
         
         if filename is None:
-            date_str = datetime.now().strftime('%Y%m%d')
+            date_str = _now_beijing().strftime('%Y%m%d')
             filename = f"report_{date_str}.md"
         
         # 确保 reports 目录存在（使用项目根目录下的 reports）

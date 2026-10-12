@@ -43,8 +43,21 @@ class TestPipelinePrefetchBehavior(unittest.TestCase):
 
         pipeline.fetcher_manager.prefetch_stock_names.assert_not_called()
 
+    def test_run_retains_failed_result_without_counting_it_as_success(self):
+        failed = SimpleNamespace(code="000001", success=False)
+        pipeline = self._build_pipeline(process_result=failed)
+        results = pipeline.run(stock_codes=["000001"], dry_run=False, send_notification=False)
+        self.assertEqual(results, [failed])
+
+    def test_run_preserves_missing_result_as_explicit_failure(self):
+        pipeline = self._build_pipeline(process_result=None)
+        results = pipeline.run(stock_codes=["000001"], dry_run=False, send_notification=False)
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].success)
+        self.assertEqual(results[0].decision_type, "invalid")
+
     def test_run_non_dry_run_prefetches_stock_names(self):
-        pipeline = self._build_pipeline(process_result=SimpleNamespace(code="000001"))
+        pipeline = self._build_pipeline(process_result=SimpleNamespace(code="000001", success=True))
 
         pipeline.run(stock_codes=["000001"], dry_run=False, send_notification=False)
 
