@@ -28,7 +28,7 @@ def _make_realtime_quote(
     open_price: float = 15.62,
     high: float = 16.29,
     low: float = 15.55,
-    volume: int = 13995600,
+    volume: int = 139956,
     change_pct: float = 0.96,
 ) -> UnifiedRealtimeQuote:
     return UnifiedRealtimeQuote(
@@ -177,7 +177,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
             "today": {"close": 15.0, "ma5": 14.8, "ma10": 14.5},
             "yesterday": {"close": 14.5, "volume": 1000000},
         }
-        quote = _make_realtime_quote(price=15.72, volume=2000000)
+        quote = _make_realtime_quote(price=15.72, volume=20000)
         trend = TrendAnalysisResult(
             code="600519",
             trend_status=TrendStatus.BULL,
@@ -192,6 +192,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         self.assertEqual(enhanced["today"]["ma5"], 15.5)
         self.assertEqual(enhanced["today"]["ma10"], 15.2)
         self.assertEqual(enhanced["today"]["ma20"], 14.9)
+        self.assertEqual(enhanced["today"]["volume"], 2000000)
         self.assertIn("多头", enhanced["ma_status"])
         self.assertEqual(enhanced["date"], date.today().isoformat())
         self.assertIn("price_change_ratio", enhanced)

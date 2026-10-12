@@ -22,6 +22,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import pandas as pd
 
 from src.config import get_config, Config
+from src.dashboard_quality import parse_stock_list
 from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.realtime_types import ChipDistribution
@@ -250,6 +251,7 @@ class StockAnalysisPipeline:
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
             news_context = None
+            news_evidence_available = False
             if self.search_service.is_available:
                 logger.info(f"{stock_name}({code}) 开始多维度情报搜索...")
 
@@ -262,6 +264,7 @@ class StockAnalysisPipeline:
 
                 # 格式化情报报告
                 if intel_results:
+                    news_evidence_available = any(r.success and r.results for r in intel_results.values() if r)
                     news_context = self.search_service.format_intel_report(intel_results, stock_name)
                     total_results = sum(
                         len(r.results) for r in intel_results.values() if r.success
@@ -310,6 +313,8 @@ class StockAnalysisPipeline:
                 stock_name  # 传入股票名称
             )
             
+            enhanced_context['news_evidence_available'] = news_evidence_available
+
             # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
             result = self.analyzer.analyze(enhanced_context, news_context=news_context)
 
@@ -320,7 +325,7 @@ class StockAnalysisPipeline:
                 result.change_pct = realtime_data.get('change_pct')
 
             # Step 8: 保存分析历史记录
-            if result:
+            if result and result.success:
                 try:
                     context_snapshot = self._build_context_snapshot(
                         enhanced_context=enhanced_context,
@@ -394,6 +399,7 @@ class StockAnalysisPipeline:
                 'circ_mv': getattr(realtime_quote, 'circ_mv', None),
                 'change_60d': getattr(realtime_quote, 'change_60d', None),
                 'source': getattr(realtime_quote, 'source', None),
+                'pre_close': getattr(realtime_quote, 'pre_close', None),
             }
             # 移除 None 值以减少上下文大小
             enhanced['realtime'] = {k: v for k, v in enhanced['realtime'].items() if v is not None}
@@ -440,10 +446,13 @@ class StockAnalysisPipeline:
                 high_p = getattr(realtime_quote, 'high', None) or price
                 low_p = getattr(realtime_quote, 'low', None) or price
                 vol = getattr(realtime_quote, 'volume', None)
+                if vol is not None:
+                    vol *= 100  # Unified quotes use lots; historical OHLCV uses shares.
                 amt = getattr(realtime_quote, 'amount', None)
                 pct = getattr(realtime_quote, 'change_pct', None)
                 realtime_today = {
                     'close': price,
+                    'pre_close': getattr(realtime_quote, 'pre_close', None),
                     'open': open_p,
                     'high': high_p,
                     'low': low_p,
@@ -727,7 +736,7 @@ class StockAnalysisPipeline:
         ) or yesterday_close
         high_p = getattr(realtime_quote, 'high', None) or price
         low_p = getattr(realtime_quote, 'low', None) or price
-        vol = getattr(realtime_quote, 'volume', None) or 0
+        vol = (getattr(realtime_quote, 'volume', None) or 0) * 100
         amt = getattr(realtime_quote, 'amount', None)
         pct = getattr(realtime_quote, 'change_pct', None)
 
@@ -960,6 +969,8 @@ class StockAnalysisPipeline:
             self.config.refresh_stock_list()
             stock_codes = self.config.stock_list
         
+        stock_codes = parse_stock_list(stock_codes if isinstance(stock_codes, str) else ",".join(stock_codes))
+
         if not stock_codes:
             logger.error("未配置自选股列表，请在 .env 文件中设置 STOCK_LIST")
             return []
@@ -1016,6 +1027,9 @@ class StockAnalysisPipeline:
                     result = future.result()
                     if result:
                         results.append(result)
+                    elif not dry_run:
+                        results.append(AnalysisResult.unavailable(code, STOCK_NAME_MAP.get(code, f"股票{code}"),
+                                                                  "处理未返回分析结果，请检查日志"))
 
                     # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
                     if idx < len(stock_codes) - 1 and analysis_delay > 0:
@@ -1028,6 +1042,9 @@ class StockAnalysisPipeline:
 
                 except Exception as e:
                     logger.error(f"[{code}] 任务执行失败: {e}")
+                    if not dry_run:
+                        results.append(AnalysisResult.unavailable(code, STOCK_NAME_MAP.get(code, f"股票{code}"),
+                                                                  "任务执行失败，请检查日志"))
         
         # 统计
         elapsed_time = time.time() - start_time
@@ -1038,7 +1055,7 @@ class StockAnalysisPipeline:
             success_count = sum(1 for code in stock_codes if self.db.has_today_data(code))
             fail_count = len(stock_codes) - success_count
         else:
-            success_count = len(results)
+            success_count = sum(1 for result in results if result.success)
             fail_count = len(stock_codes) - success_count
         
         logger.info("===== 分析完成 =====")

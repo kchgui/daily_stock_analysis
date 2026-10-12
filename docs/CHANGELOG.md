@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Normalize Chinese/English stock-list separators and reject invalid symbols without losing leading zeroes.
+- Keep missing data and failed analyses separate from valid dashboard signals and exclude failures from history evaluation.
+- Convert realtime lot volumes to shares before merging with daily bars; use provider pre-close in snapshots.
+
+### Changed
+- Standard dashboard analysis now validates price/return and volume/amount consistency before model calls.
+- Model buy advice becomes a conditional research candidate only after deterministic trend/bias checks.
+- Missing chip/news evidence remains unknown; personal position ratios are suppressed without account inputs.
+- Notification generation uses Beijing time and reports pool, valid, insufficient and failed counts separately.
+
+
 ### Changed
 - 🔎 **Fetcher failure observability** — historical data logs now record fetcher start/success/failure with elapsed time, explicit failover transitions, and clearer final outcomes; Efinance/Eastmoney failures now include upstream endpoint and normalized categories such as `remote_disconnect` and `timeout`; Akshare 新浪/腾讯实时行情日志 now also include upstream endpoint and classified failures for HTTP status, disconnects, and malformed payloads
 ### Added

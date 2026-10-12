@@ -674,7 +674,7 @@ class StockTrendAnalyzer:
         score += vol_score
 
         if result.volume_status == VolumeStatus.SHRINK_VOLUME_DOWN:
-            reasons.append("✅ 缩量回调，主力洗盘")
+            reasons.append("⚠️ 缩量回调，需核验趋势与支撑，不能据此证明主力洗盘")
         elif result.volume_status == VolumeStatus.HEAVY_VOLUME_DOWN:
             risks.append("⚠️ 放量下跌，注意风险")
 

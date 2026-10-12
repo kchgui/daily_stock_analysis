@@ -13,13 +13,14 @@ A股自选股智能分析系统 - AI分析层
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple
 
 import litellm
 from json_repair import repair_json
 from litellm import Router
 
+from src.dashboard_quality import apply_evidence_gate, validate_context
 from src.agent.llm_adapter import get_thinking_extra_body
 from src.config import Config, get_config, get_api_keys_for_model, extra_litellm_params
 
@@ -198,6 +199,8 @@ class AnalysisResult:
     data_sources: str = ""  # 数据来源说明
     success: bool = True
     error_message: Optional[str] = None
+    analysis_status: str = "completed"
+    quality_issues: List[str] = field(default_factory=list)
 
     # ========== 价格数据（分析时快照）==========
     current_price: Optional[float] = None  # 分析时的股价
@@ -205,6 +208,15 @@ class AnalysisResult:
 
     # ========== 模型标记（Issue #528）==========
     model_used: Optional[str] = None  # 分析使用的 LLM 模型（完整名，如 gemini/gemini-2.0-flash）
+
+    @classmethod
+    def unavailable(cls, code: str, name: str, reason: str, status: str = "failed"):
+        """Create an explicit non-actionable result, never a neutral market signal."""
+        return cls(code=code, name=name, sentiment_score=50, trend_prediction="无法分析",
+                   operation_advice="数据不足" if status == "insufficient_data" else "处理失败",
+                   decision_type="invalid", confidence_level="低", success=False,
+                   analysis_status=status, error_message=reason, quality_issues=[reason],
+                   analysis_summary=reason)
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -237,6 +249,8 @@ class AnalysisResult:
             'market_snapshot': self.market_snapshot,
             'search_performed': self.search_performed,
             'success': self.success,
+            'analysis_status': self.analysis_status,
+            'quality_issues': self.quality_issues,
             'error_message': self.error_message,
             'current_price': self.current_price,
             'change_pct': self.change_pct,
@@ -278,7 +292,11 @@ class AnalysisResult:
 
     def get_emoji(self) -> str:
         """根据操作建议返回对应 emoji"""
+        if not self.success:
+            return '⚠️'
         emoji_map = {
+            '待验证候选': '🟡',
+            '风险复核': '🟠',
             '买入': '🟢',
             '加仓': '🟢',
             '强烈买入': '💚',
@@ -340,6 +358,14 @@ class GeminiAnalyzer:
     # ========================================
 
     SYSTEM_PROMPT = """你是一位专注于趋势交易的 A 股投资分析师，负责生成专业的【决策仪表盘】分析报告。
+
+## 数据与证据约束
+- 缺失字段必须写“未知”，禁止填0，禁止推测筹码健康。
+- 未搜到新闻不等于没有利空；量价不能证明主力身份或洗盘。
+- 评分是规则或模型判断，不是上涨概率。
+- 未提供账户成本、权重、现金和风险预算，禁止给个人仓位比例。
+- 仅输出有条件的研究候选；入场、退出条件应注明依据。
+- 数字必须照录输入，不能编造目标价、财报事实或公告。
 
 ## 核心交易理念（必须严格遵守）
 
@@ -748,6 +774,10 @@ class GeminiAnalyzer:
                 # 最后从映射表获取
                 name = STOCK_NAME_MAP.get(code, f'股票{code}')
         
+        issues = validate_context(context)
+        if issues:
+            return AnalysisResult.unavailable(code, name, "；".join(issues), "insufficient_data")
+
         # 如果模型不可用，返回默认结果
         if not self.is_available():
             return AnalysisResult(
@@ -807,6 +837,7 @@ class GeminiAnalyzer:
             result.search_performed = bool(news_context)
             result.market_snapshot = self._build_market_snapshot(context)
             result.model_used = model_used
+            apply_evidence_gate(result, context, news_context)
 
             logger.info(f"[LLM解析] {name}({code}) 分析完成: {result.trend_prediction}, 评分 {result.sentiment_score}")
             
@@ -1070,7 +1101,7 @@ class GeminiAnalyzer:
         realtime = context.get('realtime', {}) or {}
         yesterday = context.get('yesterday', {}) or {}
 
-        prev_close = yesterday.get('close')
+        prev_close = today.get('pre_close') or yesterday.get('close')
         close = today.get('close')
         high = today.get('high')
         low = today.get('low')
@@ -1143,6 +1174,10 @@ class GeminiAnalyzer:
                 json_str = self._fix_json_string(json_str)
                 
                 data = json.loads(json_str)
+                if not isinstance(data, dict) or not data.get("operation_advice"):
+                    return AnalysisResult.unavailable(code, name, "模型响应缺少操作建议字段")
+                if not isinstance(data.get("dashboard"), dict):
+                    return AnalysisResult.unavailable(code, name, "模型响应缺少决策仪表盘结构")
                 
                 # 提取 dashboard 数据
                 dashboard = data.get('dashboard', None)
@@ -1204,12 +1239,12 @@ class GeminiAnalyzer:
                 )
             else:
                 # 没有找到 JSON，尝试从纯文本中提取信息
-                logger.warning(f"无法从响应中提取 JSON，使用原始文本分析")
-                return self._parse_text_response(response_text, code, name)
+                logger.warning("模型响应缺少 JSON，不生成交易信号")
+                return AnalysisResult.unavailable(code, name, "模型响应缺少结构化JSON，未生成信号")
                 
         except json.JSONDecodeError as e:
-            logger.warning(f"JSON 解析失败: {e}，尝试从文本提取")
-            return self._parse_text_response(response_text, code, name)
+            logger.warning(f"JSON 解析失败: {e}，不生成交易信号")
+            return AnalysisResult.unavailable(code, name, "模型响应JSON解析失败，未生成信号")
     
     def _fix_json_string(self, json_str: str) -> str:
         """修复常见的 JSON 格式问题"""
